@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import * as THREE from 'three';
 
 const clamp = THREE.MathUtils.clamp;
@@ -332,5 +333,8 @@ export default function MercuryOrbit() {
     };
   }, []);
 
-  return <div className="orbit-stage orbit-travelling" ref={mountRef} role="img" aria-label="Detailed liquid-mercury orbital sculpture. It responds to pointer movement anywhere on the website and travels through the page as you scroll." />;
+  return createPortal(
+    <div className="orbit-stage orbit-travelling" ref={mountRef} role="img" aria-label="Detailed liquid-mercury orbital sculpture. It responds to pointer movement anywhere on the website and travels through the page as you scroll." />,
+    document.body
+  );
 }
