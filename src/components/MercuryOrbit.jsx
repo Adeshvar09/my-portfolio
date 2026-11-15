@@ -1,116 +1,101 @@
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 
-const clamp = (value, min = 0, max = 1) => Math.max(min, Math.min(max, value));
-const damp = (current, target, lambda, delta) => THREE.MathUtils.damp(current, target, lambda, delta);
+const clamp = THREE.MathUtils.clamp;
+const damp = THREE.MathUtils.damp;
 
-function makeEnvironment(renderer) {
+function createStudioEnvironment() {
   const canvas = document.createElement('canvas');
-  canvas.width = 1024;
-  canvas.height = 512;
-  const ctx = canvas.getContext('2d');
-
-  const base = ctx.createLinearGradient(0, 0, 0, 512);
-  base.addColorStop(0, '#11151c');
-  base.addColorStop(0.32, '#050608');
-  base.addColorStop(0.5, '#343a43');
-  base.addColorStop(0.68, '#050608');
-  base.addColorStop(1, '#151a22');
-  ctx.fillStyle = base;
-  ctx.fillRect(0, 0, 1024, 512);
-
-  const strips = [
-    [70, 0, 35, 512, 'rgba(255,255,255,.92)'],
-    [210, 0, 12, 512, 'rgba(180,195,215,.5)'],
-    [360, 0, 48, 512, 'rgba(255,255,255,.78)'],
-    [560, 0, 18, 512, 'rgba(205,215,230,.56)'],
-    [760, 0, 62, 512, 'rgba(255,255,255,.88)'],
-    [930, 0, 20, 512, 'rgba(160,175,195,.48)'],
+  canvas.width = 2048;
+  canvas.height = 1024;
+  const c = canvas.getContext('2d');
+  const bg = c.createLinearGradient(0, 0, 0, 1024);
+  bg.addColorStop(0, '#080a0e');
+  bg.addColorStop(.18, '#69717d');
+  bg.addColorStop(.29, '#080a0e');
+  bg.addColorStop(.48, '#c2c9d2');
+  bg.addColorStop(.56, '#090b0f');
+  bg.addColorStop(.78, '#454d58');
+  bg.addColorStop(1, '#050609');
+  c.fillStyle = bg; c.fillRect(0, 0, 2048, 1024);
+  const bands = [
+    [95, 34, 56, .95], [280, 18, 15, .7], [510, 0, 94, .95],
+    [790, 30, 26, .8], [1010, 0, 130, .9], [1330, 20, 32, .75],
+    [1550, 0, 74, .95], [1810, 10, 22, .75], [1960, 0, 50, .85],
   ];
-  strips.forEach(([x, y, width, height, color]) => {
-    const gradient = ctx.createLinearGradient(x, y, x + width, y);
-    gradient.addColorStop(0, 'rgba(0,0,0,0)');
-    gradient.addColorStop(0.48, color);
-    gradient.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = gradient;
-    ctx.fillRect(x, y, width, height);
+  bands.forEach(([x, pad, w, a]) => {
+    const g = c.createLinearGradient(x, 0, x + w, 0);
+    g.addColorStop(0, 'rgba(255,255,255,0)');
+    g.addColorStop(.5, `rgba(255,255,255,${a})`);
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    c.fillStyle = g; c.fillRect(x, pad, w, 1024 - pad * 2);
   });
-
-  const glow = ctx.createRadialGradient(512, 250, 8, 512, 250, 360);
-  glow.addColorStop(0, 'rgba(255,255,255,.22)');
-  glow.addColorStop(1, 'rgba(255,255,255,0)');
-  ctx.fillStyle = glow;
-  ctx.fillRect(0, 0, 1024, 512);
-
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.mapping = THREE.EquirectangularReflectionMapping;
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.needsUpdate = true;
-  return texture;
+  for (let i = 0; i < 14; i++) {
+    const x = i * 157;
+    const g = c.createRadialGradient(x, 500, 2, x, 500, 210);
+    g.addColorStop(0, 'rgba(255,255,255,.2)');
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    c.fillStyle = g; c.fillRect(x - 210, 290, 420, 420);
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.mapping = THREE.EquirectangularReflectionMapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.generateMipmaps = true;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  return tex;
 }
 
-function makeMetal(envMap, roughness = 0.12) {
+function metal(env, color = 0xe2e6ec, roughness = .105, intensity = 2.4) {
   return new THREE.MeshPhysicalMaterial({
-    color: 0xd8dde5,
-    metalness: 1,
-    roughness,
-    envMap,
-    envMapIntensity: 2.15,
-    clearcoat: 1,
-    clearcoatRoughness: 0.08,
+    color, metalness: 1, roughness, envMap: env, envMapIntensity: intensity,
+    clearcoat: 1, clearcoatRoughness: .035, reflectivity: 1,
   });
 }
 
-function makeOrbit(radius, rotation, tube, material, phase = 0, squash = 0.78) {
-  const points = [];
-  const segments = 180;
-  for (let i = 0; i < segments; i += 1) {
-    const angle = (i / segments) * Math.PI * 2 + phase;
-    points.push(new THREE.Vector3(
-      Math.cos(angle) * radius,
-      Math.sin(angle) * radius * squash,
-      Math.sin(angle * 2 + phase) * 0.035,
-    ));
-  }
-  const curve = new THREE.CatmullRomCurve3(points, true, 'catmullrom', 0.5);
-  const geometry = new THREE.TubeGeometry(curve, 240, tube, 12, true);
+function tube(points, radius, material, tubular = 360, radial = 16) {
+  const curve = new THREE.CatmullRomCurve3(points, true, 'centripetal');
+  const geometry = new THREE.TubeGeometry(curve, tubular, radius, radial, true);
   const mesh = new THREE.Mesh(geometry, material);
-  mesh.rotation.set(rotation[0], rotation[1], rotation[2]);
-  mesh.userData.basePositions = geometry.attributes.position.array.slice();
-  mesh.userData.baseNormals = geometry.attributes.normal.array.slice();
-  mesh.userData.phase = phase;
+  mesh.userData.base = geometry.attributes.position.array.slice();
+  mesh.userData.normals = geometry.attributes.normal.array.slice();
+  mesh.userData.phase = Math.random() * Math.PI * 2;
   return mesh;
 }
 
-function makeLiquidBand(radius, rotation, material, phase = 0) {
-  const points = [];
-  const segments = 220;
-  for (let i = 0; i < segments; i += 1) {
-    const angle = (i / segments) * Math.PI * 2;
-    const swell = 1 + 0.11 * Math.sin(angle * 3 + phase) + 0.045 * Math.sin(angle * 7 - phase);
-    points.push(new THREE.Vector3(
-      Math.cos(angle) * radius * swell,
-      Math.sin(angle) * radius * 0.72 * swell,
-      0.08 * Math.sin(angle * 2 + phase),
-    ));
+function orbit(radius, rotation, thickness, material, phase = 0, squash = .76, wave = .035) {
+  const pts = [];
+  for (let i = 0; i < 300; i++) {
+    const a = i / 300 * Math.PI * 2;
+    const r = radius * (1 + .075 * Math.sin(3 * a + phase) + .026 * Math.sin(9 * a - phase));
+    pts.push(new THREE.Vector3(Math.cos(a) * r, Math.sin(a) * r * squash, wave * Math.sin(2 * a + phase)));
   }
-  const curve = new THREE.CatmullRomCurve3(points, true, 'catmullrom', 0.48);
-  const geometry = new THREE.TubeGeometry(curve, 260, 0.047, 16, true);
-  const mesh = new THREE.Mesh(geometry, material);
-  mesh.rotation.set(rotation[0], rotation[1], rotation[2]);
-  mesh.userData.basePositions = geometry.attributes.position.array.slice();
-  mesh.userData.baseNormals = geometry.attributes.normal.array.slice();
-  mesh.userData.phase = phase + 1.7;
+  const mesh = tube(pts, thickness, material, 480, 20);
+  mesh.rotation.set(...rotation);
   return mesh;
 }
 
-function makeSphere(radius, material, position, segments = 32) {
-  const geometry = new THREE.SphereGeometry(radius, segments, Math.max(20, segments - 4));
-  const mesh = new THREE.Mesh(geometry, material);
+function liquidRibbon(radius, rotation, material, phase) {
+  const pts = [];
+  for (let i = 0; i < 360; i++) {
+    const a = i / 360 * Math.PI * 2;
+    const r = radius * (1 + .105 * Math.sin(3 * a + phase) + .032 * Math.sin(8 * a - phase));
+    pts.push(new THREE.Vector3(
+      Math.cos(a) * r,
+      Math.sin(a) * r * .72 * (1 + .035 * Math.cos(5 * a + phase)),
+      .12 * Math.sin(2 * a + phase) + .035 * Math.sin(5 * a)
+    ));
+  }
+  const mesh = tube(pts, .052, material, 520, 24);
+  mesh.rotation.set(...rotation);
+  return mesh;
+}
+
+function sphere(radius, material, position, detail = 48) {
+  const mesh = new THREE.Mesh(new THREE.SphereGeometry(radius, detail, detail), material);
   mesh.position.copy(position);
-  mesh.userData.basePositions = geometry.attributes.position.array.slice();
-  mesh.userData.baseNormals = geometry.attributes.normal.array.slice();
-  mesh.userData.phase = position.x * 2.7 + position.y * 1.9;
+  mesh.userData.base = mesh.geometry.attributes.position.array.slice();
+  mesh.userData.normals = mesh.geometry.attributes.normal.array.slice();
+  mesh.userData.phase = position.x * 2.1 + position.y * 3.4;
   return mesh;
 }
 
@@ -120,272 +105,232 @@ export default function MercuryOrbit() {
   useEffect(() => {
     const mount = mountRef.current;
     if (!mount) return undefined;
-
     let renderer;
-    let animationFrame = 0;
+    let raf = 0;
+    let observer;
     let disposed = false;
-    let resizeObserver;
-    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
     try {
-      renderer = new THREE.WebGLRenderer({
-        alpha: true,
-        antialias: true,
-        powerPreference: 'low-power',
-        stencil: false,
-        depth: true,
-      });
-    } catch (error) {
+      renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, powerPreference: 'high-performance', depth: true, stencil: false });
+    } catch {
       mount.classList.add('orbit-fallback');
       return undefined;
     }
-
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.setSize(mount.clientWidth, mount.clientHeight);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.18;
+    renderer.toneMappingExposure = 1.28;
     renderer.setClearColor(0x000000, 0);
     renderer.domElement.className = 'orbit-canvas';
     renderer.domElement.setAttribute('aria-hidden', 'true');
     mount.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(34, mount.clientWidth / mount.clientHeight, 0.1, 40);
-    camera.position.set(0, 0, 6.8);
-
-    const envMap = makeEnvironment(renderer);
-    scene.environment = envMap;
-
-    scene.add(new THREE.AmbientLight(0xffffff, 0.5));
-    const key = new THREE.DirectionalLight(0xffffff, 4.2);
-    key.position.set(-3.5, 4.5, 5);
-    scene.add(key);
-    const rim = new THREE.DirectionalLight(0xb8c9e3, 3.4);
-    rim.position.set(4, -2, -3);
-    scene.add(rim);
-    const edge = new THREE.PointLight(0xffffff, 34, 12);
-    edge.position.set(0, 3.5, 2.5);
-    scene.add(edge);
+    const camera = new THREE.PerspectiveCamera(31, 1, .1, 50);
+    camera.position.set(0, 0, 6.15);
+    const env = createStudioEnvironment();
+    scene.environment = env;
+    scene.add(new THREE.AmbientLight(0xffffff, .42));
+    const lights = [
+      [0xffffff, 5.5, [-3.8, 4.4, 4.5]],
+      [0xd5e2f4, 4.2, [4.5, 1.2, -3.5]],
+      [0xffffff, 3.2, [1.2, -4.5, 2.8]],
+      [0x8c9eb8, 2.1, [-4, -1.5, -2]],
+    ];
+    lights.forEach(([color, power, pos]) => {
+      const light = new THREE.DirectionalLight(color, power);
+      light.position.set(...pos); scene.add(light);
+    });
 
     const sculpture = new THREE.Group();
     scene.add(sculpture);
+    const silver = metal(env, 0xf0f2f5, .075, 2.8);
+    const satin = metal(env, 0xb9c1cc, .16, 2.25);
+    const shadowSilver = metal(env, 0x727d8c, .21, 1.9);
+    const bright = metal(env, 0xffffff, .045, 3.2);
+    const parts = [];
+    const add = (mesh) => { sculpture.add(mesh); parts.push(mesh); return mesh; };
 
-    const brightMetal = makeMetal(envMap, 0.105);
-    const softMetal = makeMetal(envMap, 0.2);
-    const darkMetal = new THREE.MeshPhysicalMaterial({
-      color: 0x87909d,
-      metalness: 1,
-      roughness: 0.24,
-      envMap,
-      envMapIntensity: 1.65,
-      clearcoat: 1,
-    });
+    // Dense, interwoven orbital skeleton: identical geometry in every interaction state.
+    add(liquidRibbon(1.18, [.88, .12, -.31], silver, .2));
+    add(liquidRibbon(1.14, [-.68, .91, .34], bright, 1.3));
+    add(liquidRibbon(1.08, [1.26, -.64, .72], satin, 2.2));
+    add(liquidRibbon(1.24, [-1.02, -.22, -.86], silver, 3.1));
+    add(orbit(1.31, [1.2, .12, .08], .019, bright, .1, .68));
+    add(orbit(1.27, [-.72, .88, .2], .014, silver, 1.4, .78));
+    add(orbit(1.19, [.25, -.92, .72], .018, satin, 2.2, .72));
+    add(orbit(1.11, [1.42, .78, -.45], .012, bright, .8, .84));
+    add(orbit(1.36, [.52, 1.28, .92], .011, shadowSilver, 2.8, .7));
+    add(orbit(1.02, [-1.1, .44, 1.18], .009, bright, 1.9, .82));
+    add(orbit(1.42, [.18, .9, -.3], .008, satin, 2.5, .64));
 
-    const deformables = [];
-    const addDeformable = (mesh) => {
-      sculpture.add(mesh);
-      deformables.push(mesh);
-      return mesh;
-    };
+    // Fine secondary filaments add the fine-wire detail around the liquid bands.
+    for (let j = 0; j < 8; j++) {
+      const pts = [];
+      for (let i = 0; i < 260; i++) {
+        const a = i / 260 * Math.PI * 2;
+        const r = 1.02 + j * .038 + .018 * Math.sin(5 * a + j);
+        pts.push(new THREE.Vector3(Math.cos(a) * r, Math.sin(a) * r * (.68 + j * .012), .025 * Math.sin(3 * a + j * .7)));
+      }
+      const wire = tube(pts, j % 2 ? .004 : .006, j % 3 ? satin : bright, 360, 8);
+      wire.rotation.set(j * .37 + .25, j * .61 - .8, j * .29);
+      add(wire);
+    }
 
-    // The same interwoven orbital silhouette is retained in every interaction state.
-    addDeformable(makeLiquidBand(1.24, [0.92, 0.16, -0.28], brightMetal, 0.2));
-    addDeformable(makeLiquidBand(1.16, [-0.62, 0.82, 0.38], brightMetal, 1.1));
-    addDeformable(makeOrbit(1.32, [1.18, 0.1, 0.08], 0.019, softMetal, 0.1, 0.68));
-    addDeformable(makeOrbit(1.28, [-0.72, 0.88, 0.2], 0.014, brightMetal, 1.4, 0.78));
-    addDeformable(makeOrbit(1.18, [0.25, -0.92, 0.72], 0.018, softMetal, 2.2, 0.72));
-    addDeformable(makeOrbit(1.1, [1.42, 0.78, -0.45], 0.012, brightMetal, 0.8, 0.84));
-    addDeformable(makeOrbit(1.36, [0.52, 1.28, 0.92], 0.01, darkMetal, 2.8, 0.7));
-
-    const core = addDeformable(makeSphere(0.34, brightMetal, new THREE.Vector3(0, 0, 0.04), 48));
+    // Central polished mass, nested liquid-metal lobes and satellite droplets.
+    add(sphere(.32, bright, new THREE.Vector3(0, 0, .05), 72));
+    add(sphere(.19, silver, new THREE.Vector3(.08, -.025, .23), 56));
     const satellites = [
-      [0.78, 0.52, 0.18, 0.13],
-      [-0.92, -0.24, 0.12, 0.085],
-      [0.14, -0.93, -0.12, 0.105],
-      [-0.52, 0.88, -0.18, 0.07],
-      [1.02, 0.08, -0.22, 0.055],
-      [-0.12, 1.18, 0.22, 0.045],
-      [0.44, -1.12, 0.16, 0.04],
+      [.78, .52, .18, .13], [-.92, -.24, .12, .085], [.14, -.93, -.12, .105],
+      [-.52, .88, -.18, .07], [1.02, .08, -.22, .055], [-.12, 1.18, .22, .045],
+      [.44, -1.12, .16, .04], [-1.1, .48, .08, .052], [.64, .96, -.3, .036],
+      [-.72, -.88, .3, .047], [.22, .62, -.48, .032], [-.3, -.35, .58, .028],
     ];
-    satellites.forEach(([x, y, z, radius], index) => {
-      const bead = makeSphere(radius, index % 2 ? softMetal : brightMetal, new THREE.Vector3(x, y, z), 24);
+    satellites.forEach(([x, y, z, r], i) => {
+      const bead = sphere(r, i % 3 ? silver : bright, new THREE.Vector3(x, y, z), 32);
       bead.userData.floatOrigin = bead.position.clone();
-      bead.userData.floatIndex = index;
-      addDeformable(bead);
+      bead.userData.floatIndex = i;
+      add(bead);
     });
 
-    const halo = new THREE.Mesh(
-      new THREE.TorusGeometry(1.58, 0.006, 8, 220),
-      new THREE.MeshBasicMaterial({ color: 0x9da8b7, transparent: true, opacity: 0.26 }),
-    );
-    halo.rotation.x = Math.PI * 0.5;
-    halo.position.y = -1.42;
-    sculpture.add(halo);
+    // Micro droplets and small polished nodes along the outer paths.
+    for (let i = 0; i < 18; i++) {
+      const a = i / 18 * Math.PI * 2;
+      const r = 1.36 + .035 * Math.sin(i * 2.3);
+      const node = sphere(.012 + (i % 4) * .004, i % 2 ? satin : bright,
+        new THREE.Vector3(Math.cos(a) * r, Math.sin(a) * r * .72, .13 * Math.sin(a * 2)), 16);
+      node.userData.floatOrigin = node.position.clone();
+      node.userData.floatIndex = i + 20;
+      add(node);
+    }
 
-    sculpture.scale.setScalar(1.13);
+    sculpture.scale.setScalar(1.08);
+    sculpture.rotation.set(.12, -.2, .02);
 
-    const pointer = {
-      active: false,
-      x: 0,
-      y: 0,
-      vx: 0,
-      vy: 0,
-      speed: 0,
-      previousSpeed: 0,
-      force: 0,
-      sharpness: 0,
-      lastX: 0,
-      lastY: 0,
-      lastTime: 0,
-      local: new THREE.Vector3(),
-    };
-
-    const onPointerMove = (event) => {
-      const rect = mount.getBoundingClientRect();
+    const pointer = { x: 0, y: 0, vx: 0, vy: 0, speed: 0, lastSpeed: 0, force: 0, sharp: 0, lastX: 0, lastY: 0, lastTime: 0, active: false };
+    const onPointerMove = (e) => {
       const now = performance.now();
-      const nx = (event.clientX - rect.left) / rect.width;
-      const ny = (event.clientY - rect.top) / rect.height;
-      const elapsed = Math.max(8, now - (pointer.lastTime || now));
-      const dx = pointer.lastTime ? event.clientX - pointer.lastX : 0;
-      const dy = pointer.lastTime ? event.clientY - pointer.lastY : 0;
-      const speed = Math.hypot(dx, dy) / elapsed;
-      const sharpness = Math.abs(speed - pointer.previousSpeed) / 1.2;
-
-      pointer.active = true;
-      pointer.x = (nx - 0.5) * 2;
-      pointer.y = (0.5 - ny) * 2;
-      pointer.vx = dx / Math.max(1, rect.width);
-      pointer.vy = -dy / Math.max(1, rect.height);
-      pointer.speed = clamp(speed / 1.05);
-      pointer.sharpness = clamp(sharpness);
-      pointer.force = Math.max(pointer.force, clamp(pointer.speed * 0.72 + pointer.sharpness * 0.58));
-      pointer.lastX = event.clientX;
-      pointer.lastY = event.clientY;
-      pointer.previousSpeed = speed;
-      pointer.lastTime = now;
+      const dt = Math.max(8, now - (pointer.lastTime || now));
+      const dx = pointer.lastTime ? e.clientX - pointer.lastX : 0;
+      const dy = pointer.lastTime ? e.clientY - pointer.lastY : 0;
+      const speed = Math.hypot(dx, dy) / dt;
+      const accel = Math.abs(speed - pointer.lastSpeed) / Math.max(.04, dt / 1000);
+      pointer.x = (e.clientX / Math.max(1, innerWidth) - .5) * 2;
+      pointer.y = (.5 - e.clientY / Math.max(1, innerHeight)) * 2;
+      pointer.vx = dx / Math.max(1, innerWidth);
+      pointer.vy = -dy / Math.max(1, innerHeight);
+      pointer.speed = clamp(speed / 1.1);
+      pointer.sharp = clamp(accel / 16);
+      pointer.force = Math.max(pointer.force, clamp(pointer.speed * .7 + pointer.sharp * .48));
+      pointer.lastSpeed = speed;
+      pointer.lastX = e.clientX; pointer.lastY = e.clientY; pointer.lastTime = now; pointer.active = true;
     };
-
-    const onPointerLeave = () => {
-      pointer.active = false;
-      pointer.lastTime = 0;
-    };
-
-    mount.addEventListener('pointermove', onPointerMove, { passive: true });
-    mount.addEventListener('pointerleave', onPointerLeave);
+    const onPointerDown = () => { pointer.force = Math.max(pointer.force, .24); };
+    const onPointerLeave = () => { pointer.active = false; };
+    window.addEventListener('pointermove', onPointerMove, { passive: true });
+    window.addEventListener('pointerdown', onPointerDown, { passive: true });
+    window.addEventListener('blur', onPointerLeave);
 
     const clock = new THREE.Clock();
-    const tempNormal = new THREE.Vector3();
-    const tempPosition = new THREE.Vector3();
+    const temp = new THREE.Vector3();
     const localPointer = new THREE.Vector3();
+    const updatePlacement = () => {
+      const max = Math.max(1, document.documentElement.scrollHeight - innerHeight);
+      const progress = clamp(scrollY / max);
+      const x = 68 - progress * 30 + Math.sin(progress * Math.PI * 2) * 4;
+      const y = 28 + progress * 46;
+      mount.style.left = `clamp(55px, ${x}vw, calc(100vw - 55px))`;
+      mount.style.top = `${y}vh`;
+      mount.style.opacity = String(.32 + .13 * Math.sin(progress * Math.PI));
+      mount.style.setProperty('--scroll-progress', progress.toFixed(4));
+    };
+    const onScroll = () => updatePlacement();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', updatePlacement, { passive: true });
+    updatePlacement();
 
     const resize = () => {
-      if (!mount.clientWidth || !mount.clientHeight) return;
-      camera.aspect = mount.clientWidth / mount.clientHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(mount.clientWidth, mount.clientHeight);
+      const w = Math.max(1, mount.clientWidth), h = Math.max(1, mount.clientHeight);
+      camera.aspect = w / h; camera.updateProjectionMatrix(); renderer.setSize(w, h);
     };
-    resizeObserver = new ResizeObserver(resize);
-    resizeObserver.observe(mount);
+    observer = new ResizeObserver(resize); observer.observe(mount); resize();
 
     const animate = () => {
       if (disposed) return;
-      animationFrame = requestAnimationFrame(animate);
-      const delta = Math.min(clock.getDelta(), 0.035);
-      const elapsed = clock.elapsedTime;
-
-      pointer.force = damp(pointer.force, 0, pointer.active ? 1.8 : 1.25, delta);
-      pointer.speed = damp(pointer.speed, 0, 5.5, delta);
-      pointer.sharpness = damp(pointer.sharpness, 0, 4.2, delta);
-      pointer.vx = damp(pointer.vx, 0, 3.4, delta);
-      pointer.vy = damp(pointer.vy, 0, 3.4, delta);
-
-      const intensity = pointer.force;
-      const state = intensity > 0.78 ? 'sharp' : intensity > 0.52 ? 'heavy' : intensity > 0.25 ? 'hover' : intensity > 0.1 ? 'light' : intensity > 0.025 ? 'mild' : 'idle';
+      raf = requestAnimationFrame(animate);
+      const dt = Math.min(clock.getDelta(), .032);
+      const t = clock.elapsedTime;
+      pointer.force = damp(pointer.force, 0, pointer.active ? 1.15 : 1.65, dt);
+      pointer.speed = damp(pointer.speed, 0, 4.2, dt);
+      pointer.sharp = damp(pointer.sharp, 0, 2.6, dt);
+      pointer.vx = damp(pointer.vx, 0, 2.8, dt);
+      pointer.vy = damp(pointer.vy, 0, 2.8, dt);
+      const force = pointer.force;
+      const state = force > .78 ? 'sharp' : force > .52 ? 'heavy' : force > .25 ? 'hover' : force > .1 ? 'light' : force > .025 ? 'mild' : 'idle';
       mount.dataset.motion = state;
 
-      localPointer.set(pointer.x * 1.42, pointer.y * 1.42, 0.28);
+      // Cursor is mapped from the whole viewport, not from the sculpture's bounds.
+      localPointer.set(pointer.x * 1.85, pointer.y * 1.85, .12);
       sculpture.worldToLocal(localPointer);
-      const movementAngle = Math.atan2(pointer.vy, pointer.vx);
+      const angle = Math.atan2(pointer.vy, pointer.vx);
+      const targetX = pointer.y * .34 - pointer.vy * 4.6;
+      const targetY = pointer.x * .42 + pointer.vx * 4.8;
+      sculpture.rotation.x = damp(sculpture.rotation.x, targetX + Math.sin(t * .42) * (reduced ? 0 : .018), 2.1, dt);
+      sculpture.rotation.y = damp(sculpture.rotation.y, targetY + Math.cos(t * .34) * (reduced ? 0 : .022), 2.1, dt);
+      sculpture.rotation.z = damp(sculpture.rotation.z, pointer.vx * 1.7 - pointer.vy * 1.5, 1.8, dt);
+      const squeeze = force * (.18 + pointer.sharp * .12);
+      sculpture.scale.x = damp(sculpture.scale.x, 1.08 + squeeze * Math.cos(angle), 3.5, dt);
+      sculpture.scale.y = damp(sculpture.scale.y, 1.08 - squeeze * .62, 3.5, dt);
+      sculpture.scale.z = damp(sculpture.scale.z, 1.08 + squeeze * .38, 3.5, dt);
 
-      sculpture.rotation.y = damp(sculpture.rotation.y, pointer.x * 0.26 + pointer.vx * 3.8, 2.2, delta);
-      sculpture.rotation.x = damp(sculpture.rotation.x, -pointer.y * 0.2 - pointer.vy * 3.2, 2.2, delta);
-      sculpture.rotation.z = damp(sculpture.rotation.z, pointer.vx * 1.25 - pointer.vy * 1.1, 1.8, delta);
-      sculpture.rotation.x += Math.sin(elapsed * 0.52) * (reducedMotion ? 0 : 0.018);
-      sculpture.rotation.y += Math.cos(elapsed * 0.38) * (reducedMotion ? 0 : 0.022);
-
-      const compression = intensity * 0.13;
-      sculpture.scale.x = damp(sculpture.scale.x, 1.13 + compression * Math.cos(movementAngle), 4, delta);
-      sculpture.scale.y = damp(sculpture.scale.y, 1.13 - compression * 0.62, 4, delta);
-      sculpture.scale.z = damp(sculpture.scale.z, 1.13 + compression * 0.42, 4, delta);
-
-      deformables.forEach((mesh, meshIndex) => {
-        const geometry = mesh.geometry;
-        const position = geometry.attributes.position;
-        const base = mesh.userData.basePositions;
-        const normals = mesh.userData.baseNormals;
-        const phase = mesh.userData.phase || meshIndex;
-        const isSatellite = mesh.userData.floatOrigin;
-        if (isSatellite) {
+      parts.forEach((mesh, index) => {
+        const pos = mesh.geometry.attributes.position;
+        const base = mesh.userData.base;
+        const normals = mesh.userData.normals;
+        const phase = mesh.userData.phase || index;
+        if (mesh.userData.floatOrigin) {
           const origin = mesh.userData.floatOrigin;
-          const index = mesh.userData.floatIndex;
-          mesh.position.x = damp(mesh.position.x, origin.x + Math.sin(elapsed * 1.15 + index) * 0.018 + pointer.vx * intensity * (0.15 + index * 0.006), 5, delta);
-          mesh.position.y = damp(mesh.position.y, origin.y + Math.cos(elapsed * 0.9 + index * 1.7) * 0.018 + pointer.vy * intensity * 0.12, 5, delta);
+          const n = mesh.userData.floatIndex;
+          mesh.position.x = damp(mesh.position.x, origin.x + Math.sin(t * 1.15 + n) * .012 + pointer.vx * force * .32, 4.2, dt);
+          mesh.position.y = damp(mesh.position.y, origin.y + Math.cos(t * .92 + n * 1.7) * .014 + pointer.vy * force * .28, 4.2, dt);
         }
-
-        const array = position.array;
-        for (let i = 0; i < array.length; i += 3) {
-          const bx = base[i];
-          const by = base[i + 1];
-          const bz = base[i + 2];
-          const dx = bx - localPointer.x;
-          const dy = by - localPointer.y;
-          const dz = bz - localPointer.z;
-          const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
-          const influence = pointer.active ? Math.exp(-(distance * distance) / 0.22) : 0;
-          const ripple = Math.sin(elapsed * (10 + intensity * 18) - distance * 18 + phase) * influence;
-          const travellingWave = Math.sin(elapsed * 2.3 + phase + Math.atan2(by, bx) * 2) * (reducedMotion ? 0 : 0.009);
-          const localPush = influence * intensity * (0.07 + pointer.sharpness * 0.22);
-          const normalPush = ripple * intensity * (0.025 + pointer.sharpness * 0.075) + localPush;
+        const a = pos.array;
+        for (let i = 0; i < a.length; i += 3) {
+          const bx = base[i], by = base[i + 1], bz = base[i + 2];
+          const dx = bx - localPointer.x, dy = by - localPointer.y, dz = bz - localPointer.z;
+          const d2 = dx * dx + dy * dy + dz * dz;
+          const influence = Math.exp(-d2 / .3);
+          const wave = Math.sin(t * (12 + force * 18) - Math.sqrt(d2) * 21 + phase);
+          const wake = Math.sin(t * 4.2 - Math.sqrt(d2) * 7 + phase) * force * .025;
+          const push = influence * force * (.035 + pointer.sharp * .15);
+          const ripple = influence * wave * force * (.012 + pointer.sharp * .045);
+          const drag = influence * force * .24;
           const nx = normals[i], ny = normals[i + 1], nz = normals[i + 2];
-          const drag = influence * intensity * 0.16;
-          array[i] = bx + nx * normalPush + pointer.vx * drag + bx * travellingWave;
-          array[i + 1] = by + ny * normalPush + pointer.vy * drag + by * travellingWave;
-          array[i + 2] = bz + nz * normalPush + influence * intensity * Math.sin(elapsed * 15 + phase) * 0.045;
+          a[i] = bx + nx * (push + ripple) + pointer.vx * drag + bx * wake;
+          a[i + 1] = by + ny * (push + ripple) + pointer.vy * drag + by * wake;
+          a[i + 2] = bz + nz * (push + ripple) + influence * force * Math.sin(t * 16 + phase) * .07;
         }
-        position.needsUpdate = true;
-        geometry.computeVertexNormals();
+        pos.needsUpdate = true;
+        mesh.geometry.computeVertexNormals();
       });
-
-      core.scale.setScalar(1 + intensity * 0.2 + Math.sin(elapsed * 2.2) * 0.012);
       renderer.render(scene, camera);
     };
-
     animate();
 
     return () => {
-      disposed = true;
-      cancelAnimationFrame(animationFrame);
-      resizeObserver?.disconnect();
-      mount.removeEventListener('pointermove', onPointerMove);
-      mount.removeEventListener('pointerleave', onPointerLeave);
-      deformables.forEach((mesh) => {
-        mesh.geometry.dispose();
-        if (Array.isArray(mesh.material)) mesh.material.forEach((material) => material.dispose());
-        else mesh.material.dispose();
-      });
-      halo.geometry.dispose();
-      halo.material.dispose();
-      brightMetal.dispose();
-      softMetal.dispose();
-      darkMetal.dispose();
-      envMap.dispose();
-      renderer.dispose();
+      disposed = true; cancelAnimationFrame(raf); observer?.disconnect();
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('blur', onPointerLeave);
+      window.removeEventListener('scroll', onScroll);
+      window.removeEventListener('resize', updatePlacement);
+      parts.forEach((m) => { m.geometry.dispose(); m.material.dispose(); });
+      silver.dispose(); satin.dispose(); shadowSilver.dispose(); bright.dispose(); env.dispose(); renderer.dispose();
       renderer.domElement.remove();
     };
   }, []);
 
-  return (
-    <div className="orbit-stage" ref={mountRef} role="img" aria-label="Interactive liquid-mercury orbital sculpture. Move your pointer across it to disturb the interwoven chrome orbits." />
-  );
+  return <div className="orbit-stage orbit-travelling" ref={mountRef} role="img" aria-label="Detailed liquid-mercury orbital sculpture. It responds to pointer movement anywhere on the website and travels through the page as you scroll." />;
 }
