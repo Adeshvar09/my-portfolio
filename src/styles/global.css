@@ -20,3 +20,46 @@
 .orbit-stage.orbit-fallback{background:radial-gradient(ellipse at 50% 48%,rgba(200,210,225,.16),transparent 62%)}
 @media(max-width:650px){.orbit-stage{width:100%;max-width:520px;margin-inline:auto}}
 @media(prefers-reduced-motion:reduce){.orbit-canvas{animation:none}}
+
+
+/* Viewport-persistent mercury object: follows page progress without affecting layout. */
+.orbit-stage.orbit-travelling{
+  position:fixed;
+  z-index:2;
+  left:68vw;
+  top:28vh;
+  width:clamp(270px,38vw,560px);
+  height:auto;
+  aspect-ratio:1;
+  display:block;
+  transform:translate(-50%,-50%);
+  pointer-events:none;
+  overflow:visible;
+  touch-action:none;
+  opacity:.42;
+  mix-blend-mode:screen;
+  filter:drop-shadow(0 22px 46px rgba(0,0,0,.58));
+  will-change:left,top,opacity;
+  transition:opacity .35s ease;
+}
+.orbit-stage.orbit-travelling .orbit-canvas{
+  width:100%;
+  height:100%;
+  display:block;
+}
+.orbit-stage.orbit-travelling[data-motion="heavy"],
+.orbit-stage.orbit-travelling[data-motion="sharp"]{opacity:.62}
+.rail,.topbar{z-index:20}
+.grain{z-index:30}
+@media(max-width:900px){
+  .orbit-stage.orbit-travelling{width:clamp(250px,43vw,420px);opacity:.34}
+}
+@media(max-width:650px){
+  .orbit-stage.orbit-travelling{
+    width:min(76vw,340px);
+    opacity:.27;
+  }
+}
+@media(prefers-reduced-motion:reduce){
+  .orbit-stage.orbit-travelling{transition:none}
+}
