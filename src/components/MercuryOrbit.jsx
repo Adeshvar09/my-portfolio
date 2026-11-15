@@ -262,6 +262,7 @@ export default function MercuryOrbit() {
       pointer.force = Math.max(pointer.force, clamp(pointer.speed * 0.72 + pointer.sharpness * 0.58));
       pointer.lastX = event.clientX;
       pointer.lastY = event.clientY;
+      pointer.previousSpeed = speed;
       pointer.lastTime = now;
     };
 
@@ -296,6 +297,8 @@ export default function MercuryOrbit() {
       pointer.force = damp(pointer.force, 0, pointer.active ? 1.8 : 1.25, delta);
       pointer.speed = damp(pointer.speed, 0, 5.5, delta);
       pointer.sharpness = damp(pointer.sharpness, 0, 4.2, delta);
+      pointer.vx = damp(pointer.vx, 0, 3.4, delta);
+      pointer.vy = damp(pointer.vy, 0, 3.4, delta);
 
       const intensity = pointer.force;
       const state = intensity > 0.78 ? 'sharp' : intensity > 0.52 ? 'heavy' : intensity > 0.25 ? 'hover' : intensity > 0.1 ? 'light' : intensity > 0.025 ? 'mild' : 'idle';
